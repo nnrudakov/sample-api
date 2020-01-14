@@ -1,0 +1,18 @@
+# phpstorm project files
+.idea
+
+# letsencrypt verify directory
+.well-known/
+
+# local configs
+config/*local.php
+
+# composer vendor dir
+/vendor
+
+# codeception
+c3.php
+codeception.yml
+web/c3/
+tests/*e.yml
+tests/_support/_generated

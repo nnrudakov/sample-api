@@ -1,0 +1,30 @@
+actor: Tester
+paths:
+  tests: tests
+  log: tests/_output
+  data: tests/_data
+  helpers: tests/_support
+bootstrap: _bootstrap.php
+settings:
+  memory_limit: 1024M
+  colors: true
+extensions:
+  enabled:
+    - Codeception\Extension\RunFailed
+modules:
+  config:
+    Yii2:
+      configFile: 'config/test.php'
+      transaction: true
+      cleanup: true
+coverage:
+  enabled: true
+  include:
+    - components/*
+    - controllers/*
+    - models/*
+  remote_context_options:
+    ssl:
+      verify_peer: false
+      verify_peer_name: false
+error_level: '-1'

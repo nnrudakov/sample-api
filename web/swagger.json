@@ -1,0 +1,1660 @@
+{
+    "openapi": "3.0.2",
+    "info": {
+        "title": "API интерфейс SAMPLE",
+        "description": "# Сведения о SAMPLE-API\n\n`SAMPLE-API` представляет собой точку обмена данными между публичной и административной частями приложения. Обращение к методам `API` должно\nосуществляться по защищённому соединению через криптографические протоколы с использованием симметричного и\nасимметричного шифрования, а также необратимых алгоритмов криптографического хеширования.\n  \nТехническое задание расположено по ссылке.\n\n# Введение\n\nОбмен информацией, как запросов, так и ответов происходит в формате [JSON](https://www.json.org/).\n\nЗа исключением запросов методом `GET`, параметры запроса передаются в теле запроса в виде `JSON` объекта. Для всех\nзапросов обязательно передавать заголовок `Content-Type: application/json`. Виды ответов на запросы в зависимости от\nназначения запросов (см. описания конкретных методов):\n- `HTTP` код без тела ответа;\n- `JSON` объект;\n- `JSON` массив.\n  \nВсе запросы должны отправляться через `AJAX` и обязательно отправлять заголовок `X-Requested-With`. При отсутствии\nзаголовка будет возвращена ошибка с `HTTP` кодом `400`.\n  \nАдрес основного сервера `API` — https://api....ru.\n    \nАдрес тестового сервера `API` — https://api.sample.nr.\n\n# Аутентификация\n\nДанные системы могут быть предоставлены только авторизованным пользователям. Для аутентификации пользователей\nиспользуется E-mail и пароль, которые должны передаваться методу [входа в систему](#operation/users-login). После\nуспешного входа возвращается идентификатор пользователя.\n  \nВо всех запросах к `API` должны передаваться установленные куки. Пример для `jquery`:\n  \n```javascript\nxhrFields: {withCredentials: true}\n```\n\nЕсли куки не передавать, то пользователь не будет определён как авторизованный и будет возвращена ошибка о запрете\nдоступа (`HTTP` код `403`).\n\n# Защита от CSRF\n\nДля предотвращения [CSRF](https://www.owasp.org/index.php/Cross-Site_Request_Forgery_(CSRF)) атак используется\nзащитный токен. Все запросы на запись (`POST`, `DELETE` и др.) должны передавать этот токен в заголовке\n`X-Csrf-Token`. Токен можно получить с помощью метода `/csrf` (см. [описание метода](#operation/csrf)). Токен\nсоздаётся один на каждый запрос. Например, если вызвать метод `/csrf` два раза, но во время `POST` запроса отправить\nпервый токен, то будет возвращена ошибка о неверном токене, потому что действительным будет второй токен, который был\nсоздан позже. Для каждого пользователя создаётся свой токен, поэтому его нельзя кешировать. Для методов на чтение\n(через `GET`) наличие токена не нужно.\n  \nПример запроса токена и вызова метода на запись (_не использовать пример один в один в продуктовом исполнении_):\n  \n```javascript\nconst API = \"http://api.sample.nr/\";\n$.ajax({\n    type: \"HEAD\",\n    url: API + 'csrf',\n    dataType: 'json',\n    crossDomain: false,\n    xhrFields: {withCredentials: true},\n}).done(function(message, text, jqXHR){\n    $.ajax({\n        type: \"POST\",\n        url: API + 'users/password-reset-request',\n        data: JSON.stringify({\"email\": \"nnrudakov@gmail.com\"}),\n        contentType: \"application/json\",\n        dataType: 'json',\n        crossDomain: false,\n        headers: {'X-Csrf-Token': jqXHR.getResponseHeader('X-Csrf-Token')},\n        xhrFields: {withCredentials: true},\n    });\n});\n```\n\n# Получение атрибутов сущностей\n\n  Для снижения нагрузки и скорости ответа во всех методах, которые возвращают данные каких-либо сущностей (пользователи,\n  организации и др.) существует разделение атрибутов на типы:\n  - `По умолчанию`. Список атрибутов которые возвращаются без дополнительных параметров в запросе. Список не включает\n     в себя атрибуты из расширенного списка;\n  - `Расширенные` . Список дополнительных второстепенных атрибутов. Не передаются по умолчанию. Для их получения\n     необходимо передать параметр `expand` со списком (через запятую) атрибутов.\n     \nДля снижения объёма передаваемых данных рекомендуется в зависимости от назначения интерфейса пользователя запрашивать\nтолько те атрибуты, которые нужны в данном интерфейсе. Даже если это поля `по умолчанию`. Сделать это можно, передав\nпараметр `fields` с перечислением атрибутов типа `по умолчанию` через запятую. В этот список не входят атрибуты\n`расширенного` типа доступные с использованием параметра `expand`.\n  \nПример запроса:\n\n```json\n{\n  \"fields\": \"id,email\",\n  \"expand\": \"role,enabled\"\n}\n```\n\nВ методах, где используется данный механизм будет приведена таблица с перечислением атрибутов и к какому типу они\nотносятся. Пример таблицы:\n    \n  | Атрибут | По умолчанию   | Расширенные   |\n  |---------|:--------------:|:-------------:|\n  | id      | *              |               |\n  | email   | *              |               |\n  | role    |                | *             |\n  | enabled |                | *             |\n  \nПараметры `fields` и `expand` в запросах не являются обязательными.\n\n# Списки\n\nПараметры фильтрации, сортировки и пагинации по умолчанию не являются обязательными для любых списков. Списки\nвозвращают атрибуты только типа `по умолчанию`.\n\n## Фильтрация\n\nДля фильтрации данных необходимо передать параметр `filter` со списком атрибутов, по которым фильтровать и значения.\n  \nПри описании методов может быть указан список атрибутов, по которым можно вести фильтрацию. Если список не указан,\nзначит фильтрация допускается по любому атрибуту.\n  \nПример запроса фильтрации:\n    \n```json\n{\n  \"filter\": {\n    \"id\": 10,\n    \"email\": {\n      \"like\": \"gmail.com\"\n    },\n    \"or\": [\n      {\n        \"and\": [\n          {\n            \"name\": \"some name\"\n          },\n          {\n            \"price\": \"25\"\n          }\n        ]\n      },\n      {\n        \"id\": {\"in\": [2, 5, 9]},\n        \"price\": {\n          \"gt\": 10,\n          \"lt\": 50\n        }\n      }\n    ]\n  }\n}\n```\n \nНиже приведены ключевые слова, которые могут использоваться в фильтре. Ключи массива &mdash; это выражения, используемые\nкак операторы при фильтрации данных. Если ключ не распознан как ключевое слово, то он считается именем атрибута. См. в\nпримере выше ключевое слово `or` и атрибут `email`.\n  \n| Ключевое слово   | Оператор               |\n|-----------------:|------------------------|\n| and              | И                      |\n| or               | ИЛИ                    |\n| not              | НЕ                     |\n| lt               | < (меньше)             |\n| gt               | > (больше)             |\n| lte              | <= (меньше либо равно) |\n| gte              | >= (больше либо равно) |  \n| eq               | = (равно)              |\n| neq              | != (неравно)           |\n| in               | входит в список        |\n| nin              | не входит в список     |\n| like             | частичное совпадение   |\n           \n  \n## Сортировка\n\nДля сортировки данных необходимо передать параметр `sort` с указанием атрибута. По умолчанию происходит сортировка по\nвозрастанию. Для сортировки по убыванию необходимо перед атрибутом поставить знак минус (`-`).\n    \nПример запроса сортировки по возрастанию:\n  \n```json\n{\n  \"sort\": \"email\"\n}\n```\n  \nПример запроса сортировки по убыванию:\n    \n```json\n{\n  \"sort\": \"-email\"\n}\n```\n\n## Пагинация\n\nДля постраничной навигации по списку используются параметры номера страницы `page` и количество элементов на странице\n`per-page`. По умолчанию установлено 20 элементов на странице. Для предотвращения неразумных параметров пагинации\nи снижения нагрузки на сервер установлены минимальное количество элементов на странице равное 1, а максимальное 50.\n  \nПример запроса пагинации:\n      \n```json\n{\n  \"page\": 2,\n  \"per-page\": 30\n}\n```\n\nПри возвращении результата в заголовках ответа устанавливаются следующие параметры пагинации, которые могут\nиспользоваться при построении интерфейсов в публичной части:\n  \n- `X-Pagination-Total-Count`. Общее число элементов при заданном фильтре;\n- `X-Pagination-Page-Count`. Количество страниц, исходя из заданного параметра `per-page`;\n- `X-Pagination-Current-Page`. Номер текущей страницы (параметр `page`). Нумерация начинается с 1;\n- `X-Pagination-Per-Page`: Количество элементов на странице (параметр `per-page`);\n- `Link`: Набор навигационных ссылок, позволяющих просматривать элементы страницу за страницей без дополнительной\n  генерации ссылок на стороне публичной части. Для этого используется нотация\n  [HATEOAS](https://en.wikipedia.org/wiki/HATEOAS).\n    \nПример заголовка `Link`:\n\n```text\nLink: <https://api.sample.nr/companies?page=1>; rel=self, \n      <https://api.sample.nr/companies?page=2>; rel=next, \n      <https://api.sample.nr/companies?page=50>; rel=last\n```\n\n# Ошибки\n\nВ случае возникновения ошибок возвращается `JSON` объект следующей структуры:\n\n```json\n{\n  \"name\": \"Not Found\",\n  \"message\": \"Страница не найдена.\",\n  \"code\": 1,\n  \"status\": 404,\n  \"type\": \"yii\\\\web\\\\NotFoundHttpException\"\n}\n```\n\nОбозначение полей:\n- `name`. Имя ошибки. Может использоваться в заголовках диалоговых окон;\n- `message`. Текст ошибки для пользователя;\n- `code`. Код ошибки внутри системы;\n- `status`. [HTTP](https://en.wikipedia.org/wiki/List_of_HTTP_status_codes) код состояния ошибки;\n- `type`. Исключение сервера, которое вызвало ошибку. Присутствует только в режиме разработки.\n  \nСписок внутренних кодов ошибок:\n    \n| Код |                    Ошибка                                                                 |\n|-----|-------------------------------------------------------------------------------------------|\n| 0   | Общая ошибка. Пояснения в атрибуте `message`                                              |\n| 1   | Сущность не найдена. Сущность может быть любая: страница, пользователь, организации и тп. |\n| 2   | Неверный `CSRF` токен                                                                     |\n| 3   | Неверные переданные методу параметры. Например, их отсутствие или несоответствие типов    |\n| 4   | Ошибки аутентификации или выхода из системы                                               |\n| 5   | Доступ к методу или данным запрещён                                                       |\n  \nПри разборе объекта ошибок и правильной их интерпретации для пользователя необходимо рассматривать совокупность полей\n`code`, `status` и в некоторых случаях `message`. Так, например, `HTTP` код `400` возвращается и в случае неверного\n`CSRF` токена, и в случае неверных параметров, но при этом у них будет разный код системы `code`.\n\n# Список методов API\n",
+        "contact": {
+            "name": "Nikolaj Rudakov",
+            "email": "nnrudakov@gmail.com",
+            "url": "https://github.com/nnrudakov/sample-api"
+        },
+        "version": "1.0.0"
+    },
+    "servers": [
+        {
+            "url": "https://api.sample.nr",
+            "description": "Тестовый сервер"
+        }
+    ],
+    "paths": {
+        "/companies/{id}": {
+            "get": {
+                "tags": [
+                    "Организации"
+                ],
+                "summary": "Получение информации об организации",
+                "description": "Возвращает информацию об организации по её идентификатору.\n\nАтрибуты по типам ([см. использование](#section/Poluchenie-atributov-sushnostej)):\n\n| Атрибут        | По умолчанию  | Расширенные  |\n|----------------|:-------------:|:------------:|\n| id             | *             |              |\n| title          | *             |              |\n| inn            | *             |              |\n| ogrn           |               | *            |\n| address        | *             |              |\n| phone          | *             |              |\n| person         | *             |              |\n| contact        | *             |              |\n| enabled        | *             |              |\n| comment        |               | *            |",
+                "operationId": "companies-get-one",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Идентификатор организации",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Выбор атрибутов по типам",
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Attributes"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Данные организации",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CompanyFull"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Организация не найдена",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "tags": [
+                    "Организации"
+                ],
+                "summary": "Обновление организации",
+                "description": "Получает новые данные организации и обновляет.",
+                "operationId": "companies-update",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Идентификатор организации",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Новые данные",
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "properties": {
+                                    "title": {
+                                        "$ref": "#/components/schemas/title"
+                                    },
+                                    "inn": {
+                                        "$ref": "#/components/schemas/inn"
+                                    },
+                                    "ogrn": {
+                                        "$ref": "#/components/schemas/ogrn"
+                                    },
+                                    "address": {
+                                        "$ref": "#/components/schemas/address"
+                                    },
+                                    "phone": {
+                                        "$ref": "#/components/schemas/phone"
+                                    },
+                                    "person": {
+                                        "$ref": "#/components/schemas/person"
+                                    },
+                                    "contact": {
+                                        "$ref": "#/components/schemas/contact"
+                                    },
+                                    "enabled": {
+                                        "title": "Активна",
+                                        "type": "boolean"
+                                    },
+                                    "comment": {
+                                        "$ref": "#/components/schemas/comment"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "204": {
+                        "description": "Данные успешно изменены"
+                    },
+                    "400": {
+                        "description": "Неверный CSRF токен",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Организация не найдена",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибки валидации данных",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ValidateError"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/csrf": {
+            "head": {
+                "summary": "Получение CSRF токена",
+                "description": "Устанавливает значение `CSRF` токена в заголовке `X-Csrf-Token`. Токен должен использоваться в заголовках всех запросов на запись.",
+                "operationId": "csrf",
+                "responses": {
+                    "204": {
+                        "description": "Установка токена в заголовке",
+                        "headers": {
+                            "X-Csrf-Token": {
+                                "description": "CSRF токен",
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/{id}": {
+            "get": {
+                "tags": [
+                    "Пользователи"
+                ],
+                "summary": "Получение информации о пользователе",
+                "description": "Возвращает информацию о пользователе по его идентификатору.\n\nАтрибуты по типам ([см. использование](#section/Poluchenie-atributov-sushnostej)):\n\n| Атрибут | По умолчанию | Расширенные  |\n|---------|:------------:|:------------:|\n| id      | *            |              |\n| email   | *            |              |\n| name    | *            |              |\n| enabled |              | *            |\n| role    |              | *            |",
+                "operationId": "users-get-one",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Идентификатор пользователя",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Выбор атрибутов по типам",
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Attributes"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Данные пользователя",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/User"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Пользователь не найден",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "tags": [
+                    "Пользователи"
+                ],
+                "summary": "Обновление пользователя",
+                "description": "Получает новые данные пользователя и обновляет.",
+                "operationId": "users-update",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Идентификатор пользователя",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Новые данные",
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "properties": {
+                                    "email": {
+                                        "$ref": "#/components/schemas/email"
+                                    },
+                                    "password": {
+                                        "title": "Новый пароль",
+                                        "description": "Разрешается использовать только буквы английского алфавита, цифры и спец. символы. Минимум 6 символов.",
+                                        "type": "string",
+                                        "format": "password"
+                                    },
+                                    "password_repeat": {
+                                        "title": "Повторение нового пароля",
+                                        "description": "Разрешается использовать только буквы английского алфавита, цифры и спец. символы. Минимум 6 символов.",
+                                        "type": "string",
+                                        "format": "password"
+                                    },
+                                    "name": {
+                                        "$ref": "#/components/schemas/name"
+                                    },
+                                    "enabled": {
+                                        "title": "Активен",
+                                        "description": "Игнорируется если происходит обновление главного администратора.",
+                                        "type": "boolean"
+                                    },
+                                    "role": {
+                                        "title": "Роль",
+                                        "description": "Игнорируется если происходит обновление главного администратора.",
+                                        "type": "string"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "204": {
+                        "description": "Данные успешно изменены"
+                    },
+                    "400": {
+                        "description": "Неверный CSRF токен",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Пользователь не найден",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибки валидации данных",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ValidateError"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/access/{companyId}/{userId}": {
+            "get": {
+                "tags": [
+                    "Разрешения"
+                ],
+                "summary": "Получение разрешений пользователя",
+                "description": "Возвращает список разрешений пользователя в данной организации. Список возможных разрешений описан в ТЗ. Запрос разрешений главного администратора запрещён даже самому главному администратору.",
+                "operationId": "access-view",
+                "parameters": [
+                    {
+                        "name": "companyId",
+                        "in": "path",
+                        "description": "Идентификатор организации",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "name": "userId",
+                        "in": "path",
+                        "description": "Идентификатор пользователя",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Разрешения пользователя в организации",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Access"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Ошибка параметров",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Доступ к запросу запрещён",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "tags": [
+                    "Разрешения"
+                ],
+                "summary": "Установка разрешений пользователя",
+                "description": "Устанавливает разрешения пользователя в данной организации. Список возможных разрешений описан в ТЗ. Установка разрешений главного администратора запрещена даже самому главному администратору.",
+                "operationId": "access-update",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "companyId",
+                        "in": "path",
+                        "description": "Идентификатор организации",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "name": "userId",
+                        "in": "path",
+                        "description": "Идентификатор пользователя",
+                        "required": true,
+                        "schema": {
+                            "type": "integer"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Новые разрешения",
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/AccessUpdateRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "204": {
+                        "description": "Разрешения пользователя в организации успешно установлены"
+                    },
+                    "400": {
+                        "description": "Ошибка параметров",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Доступ к запросу запрещён",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/companies": {
+            "get": {
+                "tags": [
+                    "Организации"
+                ],
+                "summary": "Получение списка организаций",
+                "description": "Возвращает список организаций.<br><br>Список возвращается в соответствии с правилами доступа.<br><br>См. [работу со списком](#section/Spiski).<br><br>Фильтрация списка не предоставляется. Сортировка по умолчанию по наименованию организации в алфавитном порядке.<br><br>Список доступных атрибутов см. в [информации об организации](#operation/companies-get-one).",
+                "operationId": "companies-get-list",
+                "responses": {
+                    "200": {
+                        "description": "Список организаций",
+                        "headers": {
+                            "X-Pagination-Total-Count": {
+                                "$ref": "#/components/headers/X-Pagination-Total-Count"
+                            },
+                            "X-Pagination-Page-Count": {
+                                "$ref": "#/components/headers/X-Pagination-Page-Count"
+                            },
+                            "X-Pagination-Current-Page": {
+                                "$ref": "#/components/headers/X-Pagination-Current-Page"
+                            },
+                            "X-Pagination-Per-Page": {
+                                "$ref": "#/components/headers/X-Pagination-Per-Page"
+                            },
+                            "Link": {
+                                "$ref": "#/components/headers/Link"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/CompanyShort"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "Организации"
+                ],
+                "summary": "Добавление организации",
+                "description": "Получает новые данные организации и добавляет в систему.",
+                "operationId": "companies-create",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Новые данные",
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "title",
+                                    "inn",
+                                    "ogrn",
+                                    "address",
+                                    "phone",
+                                    "person",
+                                    "contact"
+                                ],
+                                "properties": {
+                                    "title": {
+                                        "$ref": "#/components/schemas/title"
+                                    },
+                                    "inn": {
+                                        "$ref": "#/components/schemas/inn"
+                                    },
+                                    "ogrn": {
+                                        "$ref": "#/components/schemas/ogrn"
+                                    },
+                                    "address": {
+                                        "$ref": "#/components/schemas/address"
+                                    },
+                                    "phone": {
+                                        "$ref": "#/components/schemas/phone"
+                                    },
+                                    "person": {
+                                        "$ref": "#/components/schemas/person"
+                                    },
+                                    "contact": {
+                                        "$ref": "#/components/schemas/contact"
+                                    },
+                                    "enabled": {
+                                        "title": "Активна",
+                                        "type": "boolean"
+                                    },
+                                    "comment": {
+                                        "$ref": "#/components/schemas/comment"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Организация успешно добавлена",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CompanyShort"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Неверный CSRF токен",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибки валидации данных",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ValidateError"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users": {
+            "get": {
+                "tags": [
+                    "Пользователи"
+                ],
+                "summary": "Получение списка пользователей",
+                "description": "Возвращает список пользователей. Список возвращается в соответствии с правилами доступа.<br><br>См. [работу со списком](#section/Spiski). Сортировка по умолчанию по дате добавления в обратном порядке.<br><br>Список доступных атрибутов см. в [информации о пользователе](#operation/users-get-one).",
+                "operationId": "users-get-list",
+                "requestBody": {
+                    "description": "Фильтр",
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/UsersFilterRequest"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Список пользователей",
+                        "headers": {
+                            "X-Pagination-Total-Count": {
+                                "$ref": "#/components/headers/X-Pagination-Total-Count"
+                            },
+                            "X-Pagination-Page-Count": {
+                                "$ref": "#/components/headers/X-Pagination-Page-Count"
+                            },
+                            "X-Pagination-Current-Page": {
+                                "$ref": "#/components/headers/X-Pagination-Current-Page"
+                            },
+                            "X-Pagination-Per-Page": {
+                                "$ref": "#/components/headers/X-Pagination-Per-Page"
+                            },
+                            "Link": {
+                                "$ref": "#/components/headers/Link"
+                            }
+                        },
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/UserShort"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Ошибки парметров",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибки валидации фильтра",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ValidateError"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "Пользователи"
+                ],
+                "summary": "Добавление пользователя",
+                "description": "Получает новые данные пользователя и добавляет пользователя в систему. В случае успешного добавления пользователю отправляется автоматически сгенерированный пароль для входа.",
+                "operationId": "users-create",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Новые данные",
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "email",
+                                    "name",
+                                    "enabled",
+                                    "role",
+                                    "companies"
+                                ],
+                                "properties": {
+                                    "email": {
+                                        "$ref": "#/components/schemas/email"
+                                    },
+                                    "name": {
+                                        "$ref": "#/components/schemas/name"
+                                    },
+                                    "enabled": {
+                                        "title": "Активен",
+                                        "type": "boolean"
+                                    },
+                                    "role": {
+                                        "$ref": "#/components/schemas/role"
+                                    },
+                                    "companies": {
+                                        "title": "Список организаций",
+                                        "description": "Указываются идентификаторы организаций, к которым будет иметь доступ пользователь.",
+                                        "type": "array",
+                                        "items": {
+                                            "type": "integer"
+                                        }
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "201": {
+                        "description": "Пользователь успешно добавлен",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "id": {
+                                            "$ref": "#/components/schemas/id"
+                                        },
+                                        "email": {
+                                            "$ref": "#/components/schemas/email"
+                                        },
+                                        "name": {
+                                            "$ref": "#/components/schemas/name"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Неверный CSRF токен",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибки валидации данных",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ValidateError"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/login": {
+            "post": {
+                "tags": [
+                    "Пользователи"
+                ],
+                "summary": "Вход в систему",
+                "description": "Получает адрес электронной почты, пароль и выполняет вход в систему.",
+                "operationId": "users-login",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Пользователь",
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "email",
+                                    "password"
+                                ],
+                                "properties": {
+                                    "email": {
+                                        "title": "E-mail",
+                                        "description": "Адрес электронной почты, под которым зарегистрирован пользователь",
+                                        "type": "string"
+                                    },
+                                    "password": {
+                                        "title": "Пароль",
+                                        "description": "Разрешается использовать только буквы английского алфавита, цифры и спец. символы. Минимум 6 символов.",
+                                        "type": "string",
+                                        "format": "password"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Успешный вход в систему",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "id": {
+                                            "title": "Идентификатор пользователя",
+                                            "type": "integer",
+                                            "format": "int64"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Неверный CSRF токен или неверные параметры запроса (не указан адрес, пароль или пароль неверный)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Повторный вызов метода если пользователь уже авторизован",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Пользователь не найден или заблокирован",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/logout": {
+            "post": {
+                "tags": [
+                    "Пользователи"
+                ],
+                "summary": "Выход из системы",
+                "description": "Выполняет выход пользователя из системы.",
+                "operationId": "users-logout",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "Успешный выход из системы"
+                    },
+                    "400": {
+                        "description": "Неверный CSRF токен",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Повторный вызов метода если пользователь уже вышел из системы",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/password-reset": {
+            "post": {
+                "tags": [
+                    "Пользователи"
+                ],
+                "summary": "Установка нового пароля",
+                "description": "Получает токен восстановления и новый пароль введённый в форме и записывает пользователю, которому соответствует токен.",
+                "operationId": "users-password-reset",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Новый пароль",
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "token",
+                                    "password"
+                                ],
+                                "properties": {
+                                    "token": {
+                                        "title": "Токен восстановления пароля",
+                                        "description": "Токен должен быть получен из ссылки письма, которое было отправлено пользователю после вызова метода [/users/password-reset-request](#operation/users-password-reset-request).",
+                                        "type": "string"
+                                    },
+                                    "password": {
+                                        "title": "Новый пароль",
+                                        "description": "Разрешается использовать только буквы английского алфавита, цифры и спец. символы. Минимум 6 символов.",
+                                        "type": "string",
+                                        "format": "password"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "204": {
+                        "description": "Пароль успешно изменён"
+                    },
+                    "400": {
+                        "description": "Неверный CSRF токен или неверные параметры запроса (не указан токен восстановления пароля или новый пароль)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Пользователь не найден или время жизни токена восстановления истекло",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Ошибки валидации данных",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ValidateError"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/users/password-reset-request": {
+            "post": {
+                "tags": [
+                    "Пользователи"
+                ],
+                "summary": "Запрос восстановления пароля",
+                "description": "Получает адрес зарегистрированного пользователя, генерирует уникальный код восстановления пароля и отправляет его пользователю. Ссылка действует 24 часа.<br>После перехода по ссылке пользователь должен ввести новый пароль, затем вызван метод [/users/password-reset](#operation/users-password-reset).",
+                "operationId": "users-password-reset-request",
+                "parameters": [
+                    {
+                        "name": "X-Csrf-Token",
+                        "in": "header",
+                        "description": "CSRF токен",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "description": "Адрес пользователя",
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "email"
+                                ],
+                                "properties": {
+                                    "email": {
+                                        "title": "Адрес электронной почты",
+                                        "type": "string"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "204": {
+                        "description": "Письмо успешно отправлено"
+                    },
+                    "400": {
+                        "description": "Неверный CSRF токен",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Адрес не передан, пользователь с переданным адресом не найден либо заблокирован",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Ошибка",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Error"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "Error": {
+                "title": "Ошибка",
+                "properties": {
+                    "name": {
+                        "title": "Имя ошибки",
+                        "description": "Имя ошибки может использоваться в заголовках диалоговых окон.",
+                        "type": "string"
+                    },
+                    "message": {
+                        "title": "Текст ошибки",
+                        "description": "Текст ошибки для пользователя.",
+                        "type": "string"
+                    },
+                    "code": {
+                        "title": "Код ошибки",
+                        "description": "Код ошибки внутри системы.<br>0 — Неизвестная ошибка;<br>1 — Объект не найден;<br>2 — Неверный CSRF токен;<br>3 — Неверные параметры запроса;<br>4 — Ошибка входа/выхода в систему;<br>5 — Доступ запрещён",
+                        "type": "integer",
+                        "format": "int32",
+                        "enum": [
+                            0,
+                            1,
+                            2,
+                            3,
+                            4,
+                            5
+                        ]
+                    },
+                    "status": {
+                        "title": "HTTP статус",
+                        "description": "[HTTP](https://en.wikipedia.org/wiki/List_of_HTTP_status_codes) статус ошибки.",
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "type": {
+                        "title": "Исключение сервера",
+                        "description": "Исключение сервера, которое вызвало ошибку. Присутствует только в режиме разработки.",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "ValidateError": {
+                "title": "Ошибки валидации",
+                "properties": {
+                    "field": {
+                        "title": "Имя поля",
+                        "description": "Имя поля, в котором произошла ошибка.",
+                        "type": "string"
+                    },
+                    "message": {
+                        "title": "Текст ошибки",
+                        "description": "Текст ошибки для пользователя.",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "Attributes": {
+                "title": "Выбор атрибутов по типам",
+                "properties": {
+                    "fields": {
+                        "title": "Атрибуты по умолчанию",
+                        "description": "Список атрибутов через запятую.",
+                        "type": "string"
+                    },
+                    "expand": {
+                        "title": "Расширенные атрибуты",
+                        "description": "Список атрибутов через запятую.",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "List": {
+                "title": "Параметры для списков",
+                "properties": {
+                    "sort": {
+                        "title": "Сортировка",
+                        "description": "Атрибут и направление сортировки",
+                        "type": "string"
+                    },
+                    "page": {
+                        "title": "Номер страницы пагинации",
+                        "type": "ingeger",
+                        "format": "int32",
+                        "default": 1
+                    },
+                    "per-page": {
+                        "title": "Количество элементов на странице",
+                        "type": "integer",
+                        "format": "int32",
+                        "default": 20
+                    }
+                },
+                "type": "object"
+            },
+            "id": {
+                "title": "Идентификатор",
+                "type": "integer",
+                "format": "int64"
+            },
+            "title": {
+                "title": "Наименование",
+                "type": "string"
+            },
+            "comment": {
+                "title": "Комментарий",
+                "type": "string"
+            },
+            "role": {
+                "title": "Роль",
+                "description": "Возможные роли:<br>`admin` — Администратор;<br>`user` — Пользователь.",
+                "type": "string",
+                "enum": [
+                    "admin",
+                    "user"
+                ]
+            },
+            "AccessUpdateRequest": {
+                "title": "Новые разрешения",
+                "required": [
+                    "permissions"
+                ],
+                "properties": {
+                    "permissions": {
+                        "title": "Список разрешений",
+                        "required": [
+                            "manageUsers"
+                        ],
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/Access"
+                            }
+                        ]
+                    }
+                },
+                "type": "object"
+            },
+            "UsersFilter": {
+                "title": "Фильтр пользователей",
+                "required": [
+                    "role",
+                    "companies"
+                ],
+                "properties": {
+                    "role": {
+                        "$ref": "#/components/schemas/role"
+                    },
+                    "companies": {
+                        "title": "Идентификатор организации",
+                        "type": "integer",
+                        "format": "int32"
+                    }
+                },
+                "type": "object"
+            },
+            "UsersFilterRequest": {
+                "allOf": [
+                    {
+                        "$ref": "#/components/schemas/Attributes"
+                    },
+                    {
+                        "$ref": "#/components/schemas/List"
+                    },
+                    {
+                        "title": "Фильтр пользователей",
+                        "required": [
+                            "filter"
+                        ],
+                        "properties": {
+                            "filter": {
+                                "$ref": "#/components/schemas/UsersFilter"
+                            }
+                        },
+                        "type": "object"
+                    }
+                ]
+            },
+            "Access": {
+                "title": "Разрешения",
+                "properties": {
+                    "manageUsers": {
+                        "title": "Управление пользователями",
+                        "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
+            "inn": {
+                "title": "ИНН",
+                "type": "string"
+            },
+            "ogrn": {
+                "title": "ОГРН",
+                "type": "string"
+            },
+            "address": {
+                "title": "Адрес",
+                "type": "string"
+            },
+            "phone": {
+                "title": "Телефон",
+                "description": "Формат номера `+7XXXXXXXXXX`.",
+                "type": "string"
+            },
+            "person": {
+                "title": "Ответственное лицо",
+                "description": "ФИО ответственного лица.",
+                "type": "string"
+            },
+            "contact": {
+                "title": "Контакт ответственного лица",
+                "type": "string"
+            },
+            "enabled": {
+                "title": "Активность",
+                "description": "Является ли организация не заблокированной.",
+                "type": "boolean"
+            },
+            "CompanyShort": {
+                "title": "Организация",
+                "properties": {
+                    "id": {
+                        "$ref": "#/components/schemas/id"
+                    },
+                    "title": {
+                        "$ref": "#/components/schemas/title"
+                    },
+                    "inn": {
+                        "$ref": "#/components/schemas/inn"
+                    },
+                    "address": {
+                        "$ref": "#/components/schemas/address"
+                    },
+                    "phone": {
+                        "$ref": "#/components/schemas/phone"
+                    },
+                    "person": {
+                        "$ref": "#/components/schemas/person"
+                    },
+                    "contact": {
+                        "$ref": "#/components/schemas/contact"
+                    },
+                    "enabled": {
+                        "$ref": "#/components/schemas/enabled"
+                    }
+                },
+                "type": "object"
+            },
+            "CompanyFull": {
+                "title": "Организация",
+                "properties": {
+                    "id": {
+                        "$ref": "#/components/schemas/id"
+                    },
+                    "title": {
+                        "$ref": "#/components/schemas/title"
+                    },
+                    "inn": {
+                        "$ref": "#/components/schemas/inn"
+                    },
+                    "ogrn": {
+                        "$ref": "#/components/schemas/ogrn"
+                    },
+                    "address": {
+                        "$ref": "#/components/schemas/address"
+                    },
+                    "phone": {
+                        "$ref": "#/components/schemas/phone"
+                    },
+                    "person": {
+                        "$ref": "#/components/schemas/person"
+                    },
+                    "contact": {
+                        "$ref": "#/components/schemas/contact"
+                    },
+                    "enabled": {
+                        "$ref": "#/components/schemas/enabled"
+                    },
+                    "comment": {
+                        "$ref": "#/components/schemas/comment"
+                    }
+                },
+                "type": "object"
+            },
+            "email": {
+                "title": "E-mail",
+                "type": "string"
+            },
+            "name": {
+                "title": "Имя",
+                "type": "string"
+            },
+            "User": {
+                "title": "Пользователь",
+                "properties": {
+                    "id": {
+                        "$ref": "#/components/schemas/id"
+                    },
+                    "email": {
+                        "$ref": "#/components/schemas/email"
+                    },
+                    "name": {
+                        "title": "Имя",
+                        "type": "string"
+                    },
+                    "enabled": {
+                        "title": "Активность",
+                        "description": "Является ли пользователь не заблокированным.",
+                        "type": "boolean"
+                    },
+                    "role": {
+                        "$ref": "#/components/schemas/role"
+                    }
+                },
+                "type": "object"
+            },
+            "UserShort": {
+                "title": "Пользователь",
+                "properties": {
+                    "id": {
+                        "$ref": "#/components/schemas/id"
+                    },
+                    "email": {
+                        "$ref": "#/components/schemas/email"
+                    },
+                    "name": {
+                        "title": "Имя",
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            }
+        },
+        "headers": {
+            "X-Pagination-Total-Count": {
+                "description": "Общее число элементов.",
+                "schema": {
+                    "type": "integer"
+                }
+            },
+            "X-Pagination-Page-Count": {
+                "description": "Количество страниц, исходя из заданного параметра `per-page`.",
+                "schema": {
+                    "type": "integer"
+                }
+            },
+            "X-Pagination-Current-Page": {
+                "description": "Номер текущей страницы (параметр `page`). Нумерация начинается с 1.",
+                "schema": {
+                    "type": "integer"
+                }
+            },
+            "X-Pagination-Per-Page": {
+                "description": "Количество элементов на странице (параметр `per-page`).",
+                "schema": {
+                    "type": "integer"
+                }
+            },
+            "Link": {
+                "description": "Набор навигационных ссылок.",
+                "schema": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "tags": [
+        {
+            "name": "Разрешения",
+            "description": "Операции с разрешениями пользователей"
+        },
+        {
+            "name": "Организации",
+            "description": "Операции с организациями"
+        },
+        {
+            "name": "Пользователи",
+            "description": "Операции с пользователями"
+        }
+    ],
+    "externalDocs": {
+        "description": "Документация разработчика",
+        "url": "https://github.com/nnrudakov/sample-api"
+    }
+}
